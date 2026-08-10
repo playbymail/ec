@@ -357,6 +357,17 @@ test -f public/build/manifest.json && echo "vite build present"
 
 ## 9. Configure Caddy
 
+The Caddy package does not create a log directory, and Caddy refuses to load a
+config whose log file it cannot open. Create it first:
+
+```bash
+sudo mkdir -p /var/log/caddy
+sudo chown caddy:caddy /var/log/caddy
+sudo chmod 0755 /var/log/caddy
+```
+
+Then edit the Caddyfile:
+
 ```bash
 sudo nano /etc/caddy/Caddyfile
 ```
@@ -387,12 +398,19 @@ ec.pbbgaming.com {
 There is no `resolve_root_symlink` here because the document root is a real
 directory, not a release symlink.
 
+Caddy rotates that log file on its own — 100 MB per file, 10 kept, 90 days — so
+there is no logrotate config to write.
+
 Validate and reload — reload, never stop:
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
+
+`caddy validate` adapts and checks the config but never opens the log file or
+binds a port, so it can pass on a config that then fails to load. Always confirm
+the reload itself succeeded.
 
 Caddy requests the TLS certificate on its own once `ec.pbbgaming.com` resolves to
 this server and ports 80 and 443 are open.
@@ -540,6 +558,18 @@ file. Find it and discard it:
 cd /srv/ec && git status
 git checkout -- <file>
 ```
+
+**`systemctl reload caddy` fails.** Get the full error — journalctl truncates
+lines at the terminal width, and the useful half is on the right:
+
+```bash
+sudo journalctl -u caddy -n 5 --no-pager -o cat
+```
+
+`setting up custom log 'log0': ... no such file or directory` means
+`/var/log/caddy` is missing or not writable by the `caddy` user; see the top of
+section 9. A failed reload leaves the previously loaded config running, so the
+site stays up while you fix it.
 
 **Caddy will not issue a certificate.** DNS is not pointing here yet, or 80/443 are
 blocked.
