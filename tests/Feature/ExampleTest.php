@@ -17,3 +17,10 @@ test('renders the welcome page with the registration availability flag', functio
         ->where('canRegister', Features::enabled(Features::registration()))
     );
 });
+
+test('serves the documentation placeholder to guests', function () {
+    $response = $this->get(route('docs'));
+
+    $response->assertOk();
+    $response->assertInertia(fn (AssertableInertia $page) => $page->component('docs'));
+});

@@ -32,7 +32,7 @@ import { UserMenuContent } from '@/components/user-menu-content';
 import { useCurrentUrl } from '@/hooks/use-current-url';
 import { useInitials } from '@/hooks/use-initials';
 import { cn, toUrl } from '@/lib/utils';
-import { dashboard } from '@/routes';
+import { dashboard, docs } from '@/routes';
 import type { BreadcrumbItem, NavItem } from '@/types';
 
 type Props = {
@@ -55,7 +55,7 @@ const rightNavItems: NavItem[] = [
     },
     {
         title: 'Documentation',
-        href: '/docs',
+        href: docs(),
         icon: BookOpen,
     },
 ];
