@@ -1,1089 +1,576 @@
-# Epimethean Challenge — Laravel 13 Deployment with Caddy
+# Epimethean Challenge — Deploying to Ubuntu 26.04 with Caddy
 
-This document describes a simple, production-oriented deployment for **Epimethean Challenge** (`playbymail/ec`) to a DigitalOcean Ubuntu 26.04 server.
+This is the deployment guide for **Epimethean Challenge** (`playbymail/ec`) on a
+DigitalOcean Ubuntu 26.04 server at **https://ec.pbbgaming.com**.
 
-The deployment model is:
+The model is deliberately boring:
 
-- Development and frontend builds happen on the Mac.
-- The Mac uploads a complete application release with `rsync`.
-- Node.js / npm are **not** required on the production server.
-- Composer runs on the production server to install PHP dependencies for Linux.
-- Caddy serves only Laravel's `public/` directory.
-- SQLite, `.env`, and Laravel's `storage/` directory live outside individual releases.
-- Releases are activated with an atomic `current` symlink.
-- Old releases remain available for a quick code rollback.
+- The server has a plain Git working copy at `/srv/ec`.
+- Deploying is `git pull` plus `composer install`, `npm run build`, `migrate`, `optimize`.
+- Node.js and npm **are** installed on the server. The Vite build happens there.
+- PHP-FPM runs as the `deploy` user, so there is no `setfacl` juggling and nothing
+  is owned by two users at once.
+- Caddy serves `/srv/ec/public` and terminates TLS automatically.
+- The SQLite database and its backups live outside the working copy, at `/srv/ec-data`.
+- There is no `releases/` directory and no `current` symlink.
 
-The examples assume:
+Assumptions:
 
-- Repository: `https://github.com/playbymail/ec`
-- Deployment user: `deploy`
-- PHP-FPM user: `www-data` (Ubuntu default)
-- Caddy service user: `caddy`
-- Ubuntu 26.04 default PHP: PHP 8.5
-- Application root: `/srv/ec`
-- Production domain: replace `ec.example.com` with the real domain
-- SSH target: replace `YOUR_SERVER` with the server hostname or IP
+| Thing | Value |
+| --- | --- |
+| Repository | `git@github.com:playbymail/ec.git` |
+| Domain | `ec.pbbgaming.com` |
+| OS | Ubuntu 26.04 |
+| Deploy user | `deploy` (already created, has `sudo`) |
+| PHP | 8.5 with PHP-FPM (already installed) |
+| Web server | Caddy (already installed) |
+| App directory | `/srv/ec` |
+| Data directory | `/srv/ec-data` |
 
----
-
-## 1. Directory Layout
-
-Use `/srv/ec` rather than deploying directly into `/var/www`.
-
-```text
-/srv/ec/
-├── current -> /srv/ec/releases/20260810T120000Z-a1b2c3d
-├── releases/
-│   ├── 20260810T120000Z-a1b2c3d/
-│   └── 20260812T181500Z-e4f5a6b/
-└── shared/
-    ├── .env
-    ├── database/
-    │   ├── database.sqlite
-    │   └── backups/
-    └── storage/
-```
-
-Each release contains the application source and `public/build` assets created on the Mac.
-
-The following survive every release:
-
-- `/srv/ec/shared/.env`
-- `/srv/ec/shared/database/database.sqlite`
-- `/srv/ec/shared/storage`
-
-Each release gets symlinks to the shared `.env` and `storage` directory. The production `.env` explicitly points Laravel at the shared SQLite database.
-
-Caddy always serves:
-
-```text
-/srv/ec/current/public
-```
-
-The `current` symlink changes when a new release is activated.
+Everything in sections 1–9 is done **once**. After that, deploying is section 10.
 
 ---
 
-# 2. One-Time Server Preparation
+## Why Node is installed on the server
 
-SSH into the server:
+The previous guide built assets on a Mac and shipped them with `rsync` to avoid
+installing Node. That forced release directories, shared-directory symlinks, ACLs,
+and a two-machine checklist for every deploy.
 
-```bash
-ssh deploy@YOUR_SERVER
-```
+This project's Vite build needs Node anyway — React 19, Tailwind 4, and the
+Wayfinder plugin (which boots Laravel during `vite build` to generate typed route
+helpers). Installing Node on the server costs about 120 MB of disk and removes all
+of that machinery. The build is also reproducible: it runs on the same Linux, same
+lockfile, every time.
 
-## 2.1 Verify PHP and PHP-FPM
+The one real cost is memory. `vite build` wants roughly 1–2 GB. If the droplet has
+1 GB of RAM, add swap — see section 2.1.
 
-Ubuntu 26.04 ships PHP 8.5 by default.
+---
 
-```bash
-php -v
-systemctl status php8.5-fpm
-```
-
-Confirm the FPM socket:
-
-```bash
-ls -l /run/php/php*-fpm.sock
-```
-
-These instructions assume:
+## 1. Directory layout
 
 ```text
-/run/php/php8.5-fpm.sock
+/srv/ec/                     # git working copy — the whole app
+├── .env                     # not in git, survives every pull
+├── public/                  # Caddy's document root
+│   └── build/               # vite output, not in git, rebuilt each deploy
+├── storage/                 # logs, sessions, cache — not in git, survives pulls
+└── scripts/deploy.sh        # the deploy script
+
+/srv/ec-data/                # nothing here is ever touched by git
+├── database.sqlite
+└── backups/
+    └── database-20260810T120000Z.sqlite
 ```
 
-If the installed PHP version differs, use the actual socket name in the Caddyfile and service commands below.
+Files that must survive a deploy are either gitignored (`.env`, `storage/*`,
+`public/build`) or live outside the working copy (the database). `git pull` never
+touches any of them.
 
-## 2.2 Install Deployment Utilities
+---
 
-Caddy and PHP are assumed to be installed already.
+## 2. Install the packages the server needs
 
-Install Composer, SQLite support, the SQLite command-line tool, `rsync`, and ACL support:
+SSH in as `deploy`:
+
+```bash
+ssh deploy@ec.pbbgaming.com
+```
+
+### 2.1 Add swap if the droplet has less than 2 GB of RAM
+
+Check first:
+
+```bash
+free -h
+```
+
+If `Mem` total is under 2 GB and `Swap` is 0, add 2 GB of swap so `vite build`
+and `composer install` do not get OOM-killed:
+
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### 2.2 Apt packages
 
 ```bash
 sudo apt update
 sudo apt install -y \
-    composer \
-    php-sqlite3 \
+    git \
+    curl \
+    unzip \
     sqlite3 \
-    rsync \
-    acl
+    php8.5-cli \
+    php8.5-fpm \
+    php8.5-sqlite3 \
+    php8.5-mbstring \
+    php8.5-xml \
+    php8.5-curl \
+    php8.5-zip \
+    php8.5-bcmath \
+    php8.5-intl
 ```
 
-Verify the PHP SQLite extensions:
+Confirm the SQLite extensions are loaded:
 
 ```bash
 php -m | grep -Ei 'pdo_sqlite|sqlite3'
 ```
 
-You should see both `pdo_sqlite` and `sqlite3`.
+Both `pdo_sqlite` and `sqlite3` must appear.
 
-Restart PHP-FPM if the SQLite extension was newly installed:
+### 2.3 Composer
 
-```bash
-sudo systemctl restart php8.5-fpm
-```
-
-Verify Composer:
+Install from the official installer rather than `apt install composer`, which can
+drag in a second PHP version:
 
 ```bash
+curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php
+sudo php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
+rm /tmp/composer-setup.php
+
 composer --version
 ```
 
-## 2.3 Let Caddy Connect to PHP-FPM
+### 2.4 Node.js 24
 
-The Caddy systemd service runs as user `caddy`. PHP-FPM's Unix socket must therefore allow the `caddy` group to connect.
-
-Open the default FPM pool configuration:
+Ubuntu's packaged Node is usually older than Vite 8 supports (it needs Node 20.19+
+or 22.12+). Use NodeSource:
 
 ```bash
-sudo nano /etc/php/8.5/fpm/pool.d/www.conf
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt install -y nodejs
+
+node -v    # v24.x
+npm -v
 ```
 
-Find the `listen` settings and make sure these values are active:
+---
 
-```ini
-listen = /run/php/php8.5-fpm.sock
-listen.owner = www-data
+## 3. Run PHP-FPM as the deploy user
+
+This is the step that removes all the permission complexity. Give the app its own
+FPM pool that runs as `deploy`, listening on a socket the `caddy` user can reach.
+
+```bash
+sudo tee /etc/php/8.5/fpm/pool.d/ec.conf > /dev/null <<'EOF'
+[ec]
+user = deploy
+group = deploy
+
+listen = /run/php/php8.5-fpm-ec.sock
+listen.owner = deploy
 listen.group = caddy
 listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+pm.max_requests = 500
+
+php_admin_flag[log_errors] = on
+php_admin_value[error_log] = /var/log/php8.5-fpm-ec.log
+php_admin_value[memory_limit] = 256M
+EOF
 ```
 
-Do **not** change the PHP worker user:
+Optionally disable the default pool — nothing else on this box uses it:
 
-```ini
-user = www-data
-group = www-data
+```bash
+sudo mv /etc/php/8.5/fpm/pool.d/www.conf /etc/php/8.5/fpm/pool.d/www.conf.disabled
 ```
 
-Check the FPM configuration:
+Test the configuration and restart:
 
 ```bash
 sudo php-fpm8.5 -t
-```
-
-Then restart FPM:
-
-```bash
 sudo systemctl restart php8.5-fpm
 ```
 
-Confirm the socket now has group `caddy`:
+Confirm the socket:
 
 ```bash
-ls -l /run/php/php8.5-fpm.sock
+ls -l /run/php/php8.5-fpm-ec.sock
 ```
 
-It should look approximately like:
+It should read approximately:
 
 ```text
-srw-rw---- 1 www-data caddy ... /run/php/php8.5-fpm.sock
+srw-rw---- 1 deploy caddy 0 ... /run/php/php8.5-fpm-ec.sock
 ```
 
-## 2.4 Create the Application Directories
+Because PHP runs as `deploy` and the entire working copy is owned by `deploy`,
+`storage/` and `bootstrap/cache/` are writable with no extra work.
+
+### 3.1 Let the deploy script reload services
+
+The deploy script reloads PHP-FPM at the end. Allow that without a password prompt:
 
 ```bash
-sudo mkdir -p \
-    /srv/ec/releases \
-    /srv/ec/shared/database/backups \
-    /srv/ec/shared/storage
+sudo tee /etc/sudoers.d/deploy-ec > /dev/null <<'EOF'
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl reload php8.5-fpm, /usr/bin/systemctl reload caddy
+EOF
 
-sudo chown -R deploy:www-data /srv/ec
+sudo chmod 0440 /etc/sudoers.d/deploy-ec
+sudo visudo -c
 ```
 
-Caddy needs to be able to traverse `/srv/ec` and the release directories, but it does not need access to `shared`.
+---
+
+## 4. Create the directories
 
 ```bash
+sudo mkdir -p /srv/ec /srv/ec-data/backups
+sudo chown -R deploy:deploy /srv/ec /srv/ec-data
 sudo chmod 0755 /srv/ec
-sudo chmod 2755 /srv/ec/releases
-sudo chmod 2750 /srv/ec/shared
-sudo chmod 2770 /srv/ec/shared/database
-sudo chmod 2770 /srv/ec/shared/database/backups
-sudo chmod 2770 /srv/ec/shared/storage
+sudo chmod 0750 /srv/ec-data
 ```
 
-Laravel runs as `www-data`; deployment commands run as `deploy`. Give both users persistent write access to the shared database and storage trees:
-
-```bash
-sudo setfacl -R \
-    -m u:deploy:rwx,u:www-data:rwx \
-    /srv/ec/shared/database \
-    /srv/ec/shared/storage
-
-sudo setfacl -R \
-    -d -m u:deploy:rwx,u:www-data:rwx \
-    /srv/ec/shared/database \
-    /srv/ec/shared/storage
-```
-
-The default ACL is important: files later created by PHP-FPM remain writable by the deployment user, and files created by deployment commands remain writable by PHP-FPM.
+`/srv/ec` is world-traversable so Caddy can read `public/`. `/srv/ec-data` is not —
+only `deploy` (and therefore PHP-FPM) needs it.
 
 ---
 
-# 3. First Build on the Mac
+## 5. Give the server access to GitHub
 
-From the local `ec` repository:
+Generate a passphrase-less key so `git pull` works unattended:
 
 ```bash
-cd /path/to/ec
+ssh-keygen -t ed25519 -N '' -C 'ec.pbbgaming.com deploy' -f ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
 ```
 
-Make sure the intended source is checked out:
+Add that public key to the repository at
+`https://github.com/playbymail/ec/settings/keys` as a **read-only deploy key**.
+
+Verify:
 
 ```bash
+ssh -T git@github.com
+```
+
+`Hi playbymail/ec! You've successfully authenticated` is the expected response —
+GitHub always closes the connection afterwards.
+
+---
+
+## 6. Clone the application
+
+```bash
+git clone git@github.com:playbymail/ec.git /srv/ec
+cd /srv/ec
 git switch main
-git pull --ff-only
-git status
-```
-
-The working tree should be clean before a production deployment.
-
-## 3.1 Install Local PHP Dependencies
-
-The EC Vite configuration uses Laravel Wayfinder. Wayfinder invokes Laravel during the Vite build, so the PHP dependencies need to exist on the Mac before `npm run build`.
-
-```bash
-composer install
-```
-
-Clear any locally cached route table before Wayfinder runs:
-
-```bash
-php artisan route:clear
-```
-
-## 3.2 Install Frontend Dependencies
-
-EC uses npm and has a `package-lock.json`, so use `npm ci` for a reproducible build:
-
-```bash
-npm ci
-```
-
-## 3.3 Build the Production Assets
-
-```bash
-npm run build
-```
-
-This generates Laravel/Vite production assets under:
-
-```text
-public/build/
-```
-
-Do not run the Vite development server for a production deployment.
-
-## 3.4 Optional Pre-Deployment Check
-
-Before uploading a release, run the project's tests/checks appropriate to the state of the project.
-
-At minimum, make sure the production asset build completed successfully and that:
-
-```bash
-test -f public/build/manifest.json && echo "Vite build present"
 ```
 
 ---
 
-# 4. Upload the First Release from the Mac
-
-Set a server variable:
+## 7. Create the environment file and database
 
 ```bash
-SERVER="deploy@YOUR_SERVER"
+cd /srv/ec
+cp .env.example .env
+chmod 0600 .env
+nano .env
 ```
 
-Generate a release name containing a UTC timestamp and Git commit:
-
-```bash
-RELEASE="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
-echo "$RELEASE"
-```
-
-Create the release directory remotely:
-
-```bash
-ssh "$SERVER" "mkdir -p /srv/ec/releases/$RELEASE"
-```
-
-Upload the application:
-
-```bash
-rsync -az --delete \
-    --exclude='.git/' \
-    --exclude='.env' \
-    --exclude='.env.production' \
-    --exclude='.env.backup' \
-    --exclude='node_modules/' \
-    --exclude='vendor/' \
-    --exclude='database/*.sqlite*' \
-    --exclude='public/hot' \
-    --exclude='bootstrap/cache/*.php' \
-    --exclude='.phpunit.cache' \
-    --exclude='.DS_Store' \
-    ./ \
-    "$SERVER:/srv/ec/releases/$RELEASE/"
-```
-
-The upload **does include `public/build/`**. That is intentional: those assets were built on the Mac and are what Caddy will serve in production.
-
-Remember the release name; the next section uses it.
-
----
-
-# 5. Prepare the First Release on the Server
-
-SSH to the server:
-
-```bash
-ssh deploy@YOUR_SERVER
-```
-
-Set the release name to the value generated on the Mac:
-
-```bash
-RELEASE="20260810T120000Z-a1b2c3d"
-RELEASE_DIR="/srv/ec/releases/$RELEASE"
-```
-
-Replace the example with the actual release name.
-
-## 5.1 Normalize Source Permissions
-
-The application source should be owned by `deploy` and readable by Caddy and PHP-FPM.
-
-```bash
-sudo chown -R deploy:deploy "$RELEASE_DIR"
-
-find "$RELEASE_DIR" -type d -exec chmod 0755 {} +
-find "$RELEASE_DIR" -type f -exec chmod 0644 {} +
-
-chmod 0755 "$RELEASE_DIR/artisan"
-```
-
-Do this **before** Composer creates `vendor/`; do not run this normalization over an installed `vendor/` tree.
-
-## 5.2 Initialize Shared Laravel Storage
-
-For the first release, copy Laravel's storage skeleton into the shared directory:
-
-```bash
-rsync -a "$RELEASE_DIR/storage/" /srv/ec/shared/storage/
-```
-
-Apply the shared storage ACLs again after the copy:
-
-```bash
-sudo setfacl -R \
-    -m u:deploy:rwx,u:www-data:rwx \
-    /srv/ec/shared/storage
-
-sudo setfacl -R \
-    -d -m u:deploy:rwx,u:www-data:rwx \
-    /srv/ec/shared/storage
-```
-
-Replace the release's `storage` directory with the shared symlink:
-
-```bash
-rm -rf "$RELEASE_DIR/storage"
-ln -s /srv/ec/shared/storage "$RELEASE_DIR/storage"
-```
-
-## 5.3 Create the Production Environment File
-
-Copy the example into the shared location:
-
-```bash
-cp "$RELEASE_DIR/.env.example" /srv/ec/shared/.env
-sudo chown deploy:www-data /srv/ec/shared/.env
-sudo chmod 0640 /srv/ec/shared/.env
-```
-
-Link it into the release:
-
-```bash
-ln -s /srv/ec/shared/.env "$RELEASE_DIR/.env"
-```
-
-Edit the production environment:
-
-```bash
-nano /srv/ec/shared/.env
-```
-
-Start with at least:
+Set at least these values:
 
 ```dotenv
 APP_NAME="Epimethean Challenge"
 APP_ENV=production
 APP_KEY=
 APP_DEBUG=false
-APP_URL=https://ec.example.com
+APP_URL=https://ec.pbbgaming.com
+
+LOG_CHANNEL=stack
+LOG_STACK=daily
+LOG_LEVEL=warning
 
 DB_CONNECTION=sqlite
-DB_DATABASE=/srv/ec/shared/database/database.sqlite
+DB_DATABASE=/srv/ec-data/database.sqlite
 
 SESSION_DRIVER=database
+SESSION_SECURE_COOKIE=true
 QUEUE_CONNECTION=database
 CACHE_STORE=database
+
+MAIL_MAILER=log
+MAIL_FROM_ADDRESS="no-reply@pbbgaming.com"
+
+VITE_APP_NAME="${APP_NAME}"
 ```
 
-Replace `ec.example.com` with the real hostname.
+`APP_DEBUG` stays `false`. `APP_URL` must be the exact `https://` origin — Fortify's
+passkey support derives the WebAuthn relying-party ID from it, so a wrong value
+breaks passkey registration.
 
-Review the mail settings and any other application-specific environment values before production use.
-
-`APP_DEBUG` must remain `false` in production.
-
-## 5.4 Create the SQLite Database
+Create the database file:
 
 ```bash
-touch /srv/ec/shared/database/database.sqlite
-sudo chown deploy:www-data /srv/ec/shared/database/database.sqlite
-sudo chmod 0660 /srv/ec/shared/database/database.sqlite
+touch /srv/ec-data/database.sqlite
+chmod 0640 /srv/ec-data/database.sqlite
 ```
-
-Reapply the database ACL:
-
-```bash
-sudo setfacl \
-    -m u:deploy:rw,u:www-data:rw \
-    /srv/ec/shared/database/database.sqlite
-```
-
-## 5.5 Install PHP Dependencies
-
-Change into the release:
-
-```bash
-cd "$RELEASE_DIR"
-```
-
-Install production Composer dependencies:
-
-```bash
-composer install \
-    --no-dev \
-    --prefer-dist \
-    --optimize-autoloader \
-    --no-interaction
-```
-
-Do not run Composer with `sudo`.
-
-## 5.6 Generate the Laravel Application Key
-
-This is done **once** for a new production environment:
-
-```bash
-php artisan key:generate
-```
-
-Because `.env` is shared, future releases retain the same `APP_KEY`.
-
-Do not generate a new application key on later deployments.
-
-## 5.7 Make Laravel's Release Cache Writable
-
-`storage` is shared. `bootstrap/cache` belongs to the individual release.
-
-```bash
-sudo chown -R deploy:www-data "$RELEASE_DIR/bootstrap/cache"
-sudo chmod -R g+rwX "$RELEASE_DIR/bootstrap/cache"
-```
-
-## 5.8 Run the Initial Database Migrations
-
-```bash
-php artisan migrate --force
-```
-
-## 5.9 Optimize Laravel for Production
-
-```bash
-php artisan optimize
-```
-
-Laravel's `optimize` command caches production configuration, routes, events, and views.
-
-## 5.10 Activate the Release
-
-Create a temporary symlink and atomically move it into place:
-
-```bash
-ln -s "$RELEASE_DIR" /srv/ec/current.next
-mv -Tf /srv/ec/current.next /srv/ec/current
-```
-
-Verify it:
-
-```bash
-readlink -f /srv/ec/current
-```
-
-It should resolve to the new release.
 
 ---
 
-# 6. Initial Caddyfile
+## 8. First build
 
-Caddy must serve **only** Laravel's `public` directory.
+```bash
+cd /srv/ec
 
-Edit:
+composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
+
+php artisan key:generate
+
+npm ci
+npm run build
+
+php artisan migrate --force
+php artisan storage:link
+php artisan optimize
+```
+
+Notes:
+
+- `composer install` runs before `npm run build` because the Wayfinder Vite plugin
+  boots Laravel to generate `resources/js/actions` and `resources/js/routes`.
+- Never run Composer with `sudo`.
+- `php artisan key:generate` is a **one-time** step. `.env` is not in Git and is not
+  replaced by deploys, so the key persists. Regenerating it invalidates every
+  session and every encrypted value in the database.
+
+Check the build landed:
+
+```bash
+test -f public/build/manifest.json && echo "vite build present"
+```
+
+---
+
+## 9. Configure Caddy
 
 ```bash
 sudo nano /etc/caddy/Caddyfile
 ```
 
-Use:
-
 ```caddyfile
-ec.example.com {
-    root /srv/ec/current/public
+ec.pbbgaming.com {
+	root /srv/ec/public
 
-    encode zstd gzip
+	encode zstd gzip
 
-    php_fastcgi unix//run/php/php8.5-fpm.sock {
-        resolve_root_symlink
-    }
+	php_fastcgi unix//run/php/php8.5-fpm-ec.sock
 
-    file_server
+	file_server
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	log {
+		output file /var/log/caddy/ec.pbbgaming.com.log
+	}
 }
 ```
 
-Replace `ec.example.com` with the real DNS hostname.
+There is no `resolve_root_symlink` here because the document root is a real
+directory, not a release symlink.
 
-If the server is using a PHP-FPM version other than 8.5, change the socket path to the value shown by:
-
-```bash
-ls -l /run/php/php*-fpm.sock
-```
-
-### Why `resolve_root_symlink`?
-
-The Caddy document root contains `/srv/ec/current`, which is intentionally a symlink to the active release. `resolve_root_symlink` tells Caddy's PHP FastCGI handling to resolve that deployment symlink to the actual release path.
-
-### HTTPS
-
-When the hostname's DNS records point at the server and ports 80 and 443 are reachable, Caddy will obtain and manage the site's public TLS certificate automatically.
-
----
-
-# 7. Validate and Reload Caddy
-
-Validate the configuration before loading it:
+Validate and reload — reload, never stop:
 
 ```bash
-sudo caddy validate \
-    --config /etc/caddy/Caddyfile \
-    --adapter caddyfile
-```
-
-If validation succeeds:
-
-```bash
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
-Do not stop Caddy for normal configuration changes; reload it.
+Caddy requests the TLS certificate on its own once `ec.pbbgaming.com` resolves to
+this server and ports 80 and 443 are open.
 
-Check status:
+### 9.1 Verify
 
 ```bash
 systemctl status caddy
 systemctl status php8.5-fpm
+
+sudo -u caddy test -r /srv/ec/public/index.php && echo "caddy can read index.php"
+sudo -u caddy test -w /run/php/php8.5-fpm-ec.sock && echo "caddy can reach php-fpm"
+
+curl -i https://ec.pbbgaming.com/up
 ```
 
-Verify that Caddy can read the application entry point:
+`/up` is Laravel's health endpoint and should return HTTP 200.
 
-```bash
-sudo -u caddy test -r /srv/ec/current/public/index.php \
-    && echo "Caddy can read public/index.php"
-```
-
-Verify that Caddy can connect to the PHP-FPM socket:
-
-```bash
-sudo -u caddy test -r /run/php/php8.5-fpm.sock \
-    && sudo -u caddy test -w /run/php/php8.5-fpm.sock \
-    && echo "Caddy can access PHP-FPM socket"
-```
+Then click through the app: home page, sign-in, a page that reads the database, a
+page that writes to it, and confirm CSS and JS load from `/build/`.
 
 ---
 
-# 8. Smoke Test
+## 10. Deploying a change
 
-Laravel 13 provides `/up` as its default health endpoint.
-
-From the server:
+Push to `main`, then on the server:
 
 ```bash
-curl -i https://ec.example.com/up
+ssh deploy@ec.pbbgaming.com
+/srv/ec/scripts/deploy.sh
 ```
 
-From the Mac:
+That script does the whole thing:
+
+1. `php artisan down` — maintenance mode
+2. `git pull --ff-only origin main`
+3. SQLite online backup to `/srv/ec-data/backups/` (keeps the 10 most recent)
+4. `composer install --no-dev --optimize-autoloader`
+5. `php artisan optimize:clear` — a stale route cache breaks the Wayfinder build
+6. `npm ci && npm run build`
+7. `php artisan migrate --force`
+8. `php artisan optimize`
+9. `sudo systemctl reload php8.5-fpm`
+10. `php artisan up`
+
+If any step fails the script stops and brings the app back up, so a failed deploy
+leaves the previous code running — the working copy may be on the new commit, but
+nothing was migrated or re-cached. Read the error, fix it, run the script again.
+
+Useful overrides:
 
 ```bash
-curl -i https://ec.example.com/up
+BRANCH=hotfix/urgent /srv/ec/scripts/deploy.sh
+SKIP_NPM=1 /srv/ec/scripts/deploy.sh    # backend-only change, skips the vite build
 ```
 
-A healthy application should return HTTP 200.
-
-Then visit the application in a browser and exercise at least:
-
-- the home page;
-- sign-in / authentication pages;
-- a page that reads the database;
-- a page that writes to the database;
-- CSS and JavaScript assets under `public/build`.
-
-Useful logs:
-
-```bash
-sudo journalctl -u caddy -n 100 --no-pager
-sudo journalctl -u php8.5-fpm -n 100 --no-pager
-tail -f /srv/ec/shared/storage/logs/laravel.log
-```
+Caddy does not need reloading for a deploy. Its config never changes.
 
 ---
 
-# 9. Normal Subsequent Deployment
+## 11. Rollback
 
-The first deployment has extra initialization. Later deployments are shorter.
-
-## 9.1 On the Mac: Update, Build, and Upload
-
-From the repository:
+Code first. From `/srv/ec`:
 
 ```bash
-cd /path/to/ec
-
-git switch main
-git pull --ff-only
-git status
+cd /srv/ec
+git log --oneline -10
 ```
 
-Install the locked PHP dependencies needed locally by Laravel / Wayfinder:
+Pick the last good commit and deploy it:
 
 ```bash
-composer install
-```
-
-Clear any stale local route cache before the Wayfinder-enabled Vite build:
-
-```bash
-php artisan route:clear
-```
-
-Install the locked frontend dependencies and build:
-
-```bash
-npm ci
-npm run build
-```
-
-Create the release identifier:
-
-```bash
-SERVER="deploy@YOUR_SERVER"
-RELEASE="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
-
-echo "$RELEASE"
-```
-
-Create the destination:
-
-```bash
-ssh "$SERVER" "mkdir -p /srv/ec/releases/$RELEASE"
-```
-
-Upload:
-
-```bash
-rsync -az --delete \
-    --exclude='.git/' \
-    --exclude='.env' \
-    --exclude='.env.production' \
-    --exclude='.env.backup' \
-    --exclude='node_modules/' \
-    --exclude='vendor/' \
-    --exclude='database/*.sqlite*' \
-    --exclude='public/hot' \
-    --exclude='bootstrap/cache/*.php' \
-    --exclude='.phpunit.cache' \
-    --exclude='.DS_Store' \
-    ./ \
-    "$SERVER:/srv/ec/releases/$RELEASE/"
-```
-
-## 9.2 On the Server: Prepare the Release
-
-SSH to the server:
-
-```bash
-ssh deploy@YOUR_SERVER
-```
-
-Set the release:
-
-```bash
-RELEASE="THE_RELEASE_NAME_FROM_THE_MAC"
-RELEASE_DIR="/srv/ec/releases/$RELEASE"
-```
-
-Normalize the uploaded source **before** installing Composer dependencies:
-
-```bash
-sudo chown -R deploy:deploy "$RELEASE_DIR"
-
-find "$RELEASE_DIR" -type d -exec chmod 0755 {} +
-find "$RELEASE_DIR" -type f -exec chmod 0644 {} +
-chmod 0755 "$RELEASE_DIR/artisan"
-```
-
-Merge any new Laravel storage skeleton directories into shared storage:
-
-```bash
-rsync -a "$RELEASE_DIR/storage/" /srv/ec/shared/storage/
-```
-
-Replace release-local storage with the shared storage symlink:
-
-```bash
-rm -rf "$RELEASE_DIR/storage"
-ln -s /srv/ec/shared/storage "$RELEASE_DIR/storage"
-```
-
-Link the production environment:
-
-```bash
-ln -s /srv/ec/shared/.env "$RELEASE_DIR/.env"
-```
-
-Reapply shared storage ACLs:
-
-```bash
-sudo setfacl -R \
-    -m u:deploy:rwx,u:www-data:rwx \
-    /srv/ec/shared/storage
-
-sudo setfacl -R \
-    -d -m u:deploy:rwx,u:www-data:rwx \
-    /srv/ec/shared/storage
-```
-
-Install the PHP dependencies:
-
-```bash
-cd "$RELEASE_DIR"
-
-composer install \
-    --no-dev \
-    --prefer-dist \
-    --optimize-autoloader \
-    --no-interaction
-```
-
-Make the release cache writable:
-
-```bash
-sudo chown -R deploy:www-data "$RELEASE_DIR/bootstrap/cache"
-sudo chmod -R g+rwX "$RELEASE_DIR/bootstrap/cache"
-```
-
-## 9.3 Put the Application into Maintenance Mode
-
-For this small SQLite-backed application, favor a short maintenance window over trying to do schema changes while requests are active.
-
-If there is already a current release:
-
-```bash
-cd /srv/ec/current
-php artisan down --retry=60
-```
-
-Because `storage/` is shared, the maintenance state is visible to both the old and new release.
-
-## 9.4 Back Up SQLite Before Migrating
-
-Never make a plain `cp` of a SQLite database while it may be active.
-
-Use SQLite's online backup command:
-
-```bash
-BACKUP="/srv/ec/shared/database/backups/database-$(date -u +%Y%m%dT%H%M%SZ).sqlite"
-
-sqlite3 /srv/ec/shared/database/database.sqlite \
-    ".backup '$BACKUP'"
-
-chmod 0660 "$BACKUP"
-```
-
-Confirm the backup exists:
-
-```bash
-ls -lh "$BACKUP"
-```
-
-## 9.5 Migrate and Optimize the New Release
-
-```bash
-cd "$RELEASE_DIR"
-
-php artisan migrate --force
-php artisan optimize
-```
-
-If either command fails, **do not switch `current`**.
-
-Bring the existing release back online:
-
-```bash
-cd /srv/ec/current
-php artisan up
-```
-
-Then investigate the failure.
-
-## 9.6 Activate the New Release
-
-When migration and optimization succeed:
-
-```bash
-ln -s "$RELEASE_DIR" /srv/ec/current.next
-mv -Tf /srv/ec/current.next /srv/ec/current
-```
-
-Bring the application online through the newly active release:
-
-```bash
-cd /srv/ec/current
-php artisan up
-```
-
-Verify:
-
-```bash
-readlink -f /srv/ec/current
-curl -i https://ec.example.com/up
-```
-
-A normal code deployment does **not** require a Caddy reload because the Caddyfile still points at `/srv/ec/current/public`.
-
-## 9.7 Long-Running Laravel Processes
-
-If EC later runs queue workers, Reverb, Octane, or other long-running Laravel services, those processes must be reloaded after activating new code.
-
-Laravel 13 provides:
-
-```bash
-cd /srv/ec/current
-php artisan reload
-```
-
-This is not necessary while the application has no long-running Laravel workers.
-
----
-
-# 10. Rollback
-
-The release layout makes a code rollback straightforward, but database migrations require care.
-
-List releases:
-
-```bash
-ls -1dt /srv/ec/releases/*
-```
-
-Find the previous release, for example:
-
-```text
-/srv/ec/releases/20260810T120000Z-a1b2c3d
-```
-
-Put the application into maintenance mode:
-
-```bash
-cd /srv/ec/current
 php artisan down
-```
-
-Switch `current` back:
-
-```bash
-PREVIOUS="/srv/ec/releases/20260810T120000Z-a1b2c3d"
-
-ln -s "$PREVIOUS" /srv/ec/current.next
-mv -Tf /srv/ec/current.next /srv/ec/current
-```
-
-Bring it back:
-
-```bash
-cd /srv/ec/current
+git checkout <sha>
+composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
+php artisan optimize:clear
+npm ci && npm run build
+php artisan optimize
+sudo systemctl reload php8.5-fpm
 php artisan up
 ```
 
-Verify:
+You are now on a detached HEAD. Get back onto the branch once the fix is pushed:
 
 ```bash
-curl -i https://ec.example.com/up
+git switch main
+/srv/ec/scripts/deploy.sh
 ```
 
-## Database Warning
+### Rolling back the database
 
-Switching application code does **not** undo a database migration.
+Reverting code does **not** revert a migration. If the bad deploy changed the
+schema, restore the backup the deploy script took immediately beforehand:
 
-If a deployment included a schema change that is incompatible with the previous release, restoring the previous code alone may not be sufficient.
+```bash
+ls -1t /srv/ec-data/backups/
+php artisan down
+cp /srv/ec-data/backups/database-TIMESTAMP.sqlite /srv/ec-data/database.sqlite
+php artisan up
+```
 
-That is why every deployment takes a SQLite backup immediately before `php artisan migrate --force`.
-
-Restore a database backup only after deliberately deciding that the data changes made since the backup can be discarded.
+That discards every write since the backup was taken. Decide that is acceptable
+before running it.
 
 ---
 
-# 11. Release Cleanup
+## 12. Troubleshooting
 
-Keep a few known-good releases for rollback.
-
-For example, after a successful deployment:
+**502 from Caddy.** PHP-FPM is down or the socket path is wrong.
 
 ```bash
-ls -1dt /srv/ec/releases/*
+ls -l /run/php/php8.5-fpm-ec.sock
+sudo journalctl -u php8.5-fpm -n 100 --no-pager
 ```
 
-Once confident in the new release, manually remove old releases that are no longer needed:
+**500 with a blank page.** Check the application log — `APP_DEBUG` is `false`, so
+the browser will not show you anything.
 
 ```bash
-rm -rf /srv/ec/releases/OLD_RELEASE_NAME
+tail -50 /srv/ec/storage/logs/laravel.log
+tail -50 /var/log/php8.5-fpm-ec.log
 ```
 
-Never remove the directory returned by:
+**"Unable to locate file in Vite manifest".** The build did not run or did not
+finish. Re-run it and watch for an OOM kill:
 
 ```bash
-readlink -f /srv/ec/current
+cd /srv/ec && npm run build
+dmesg | tail -20
 ```
 
-Do not automatically delete SQLite backups as part of the same command until a backup-retention policy has been decided.
+**"Database file does not exist" or "readonly database".** The path in `.env` must
+be absolute (`/srv/ec-data/database.sqlite`) and the file plus its directory must be
+owned by `deploy`.
 
----
-
-# 12. What Runs Where
-
-## Mac
-
-The Mac needs the full development toolchain:
-
-```text
-Git
-PHP
-Composer
-Node.js
-npm
+```bash
+ls -l /srv/ec-data/
+php artisan config:clear
 ```
 
-The Mac performs:
+**`git pull` refuses to fast-forward.** Something on the server modified a tracked
+file. Find it and discard it:
 
-```text
-composer install
-php artisan route:clear
-npm ci
-npm run build
-rsync upload
+```bash
+cd /srv/ec && git status
+git checkout -- <file>
 ```
 
-The Vite build is done on the Mac because EC uses React, Vite, Tailwind, and Laravel Wayfinder.
+**Caddy will not issue a certificate.** DNS is not pointing here yet, or 80/443 are
+blocked.
 
-## Production Server
-
-The production server needs:
-
-```text
-Caddy
-PHP 8.5 / PHP-FPM
-PHP SQLite extension
-Composer
-SQLite
-rsync
-ACL utilities
-```
-
-It does **not** need:
-
-```text
-Node.js
-npm
-Bun
-```
-
-The production server performs:
-
-```text
-composer install --no-dev ...
-php artisan migrate --force
-php artisan optimize
+```bash
+dig +short ec.pbbgaming.com
+sudo journalctl -u caddy -n 100 --no-pager
 ```
 
 ---
 
-# 13. Deployment Checklist
-
-For a routine release:
+## 13. What the server has
 
 ```text
-[ ] Mac working tree is the intended commit and clean
-[ ] composer install succeeds on Mac
-[ ] php artisan route:clear succeeds
-[ ] npm ci succeeds
-[ ] npm run build succeeds
-[ ] public/build/manifest.json exists
-[ ] new release directory created on server
-[ ] rsync upload succeeds
-[ ] shared .env linked
-[ ] shared storage linked
-[ ] production composer install succeeds
-[ ] application enters maintenance mode
-[ ] SQLite backup succeeds
-[ ] php artisan migrate --force succeeds
-[ ] php artisan optimize succeeds
-[ ] current symlink switched
-[ ] php artisan up succeeds
-[ ] /up returns HTTP 200
-[ ] browser smoke test succeeds
+git          php8.5-cli / php8.5-fpm     composer
+curl         php8.5-sqlite3              node 24 / npm
+unzip        php8.5-mbstring             caddy
+sqlite3      php8.5-xml, curl, zip, bcmath, intl
 ```
+
+There are no queue workers, no scheduler entries, and no Reverb or Octane
+processes in this application yet. When that changes, add the systemd units or
+cron entry and have `scripts/deploy.sh` restart them after `php artisan optimize`.
 
 ---
 
-# 14. Reference Notes
+## 14. References
 
-This layout follows the important deployment requirements from Laravel and Caddy:
-
-- Laravel's web server document root must be the application's `public/` directory.
-- Laravel requires `storage` and `bootstrap/cache` to be writable by the PHP process.
-- Laravel recommends `php artisan optimize` during production deployment.
-- Laravel production environments must use `APP_DEBUG=false`.
-- Laravel Vite production assets are created with `npm run build`.
-- EC's Wayfinder Vite plugin invokes Laravel route generation during the Vite build, so Laravel must be available on the Mac and stale route caches should be cleared before building.
-- Caddy's `php_fastcgi` directive is designed for PHP applications using an `index.php` front controller.
-- Caddy supports `resolve_root_symlink` specifically for deployments where the web root contains a release-switching symlink.
-- Caddy's systemd package runs as user `caddy`.
-- PHP-FPM Unix sockets require filesystem permissions that allow the web server to connect.
-
-Official references:
-
-- Laravel 13 deployment:
-  https://laravel.com/docs/13.x/deployment
-- Laravel 13 Vite:
-  https://laravel.com/docs/13.x/vite
-- Laravel Wayfinder:
-  https://github.com/laravel/wayfinder
-- Caddy `php_fastcgi`:
-  https://caddyserver.com/docs/caddyfile/directives/php_fastcgi
-- Caddy `root`:
-  https://caddyserver.com/docs/caddyfile/directives/root
-- Caddy systemd service:
-  https://caddyserver.com/docs/running
-- PHP-FPM pool configuration:
-  https://www.php.net/manual/en/install.fpm.configuration.php
+- Laravel deployment — https://laravel.com/docs/13.x/deployment
+- Laravel Vite — https://laravel.com/docs/13.x/vite
+- Laravel Wayfinder — https://github.com/laravel/wayfinder
+- Caddy `php_fastcgi` — https://caddyserver.com/docs/caddyfile/directives/php_fastcgi
+- Caddy service user — https://caddyserver.com/docs/running
+- PHP-FPM pool configuration — https://www.php.net/manual/en/install.fpm.configuration.php
