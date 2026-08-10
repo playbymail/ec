@@ -161,7 +161,9 @@ return [
     */
 
     'features' => [
-        Features::registration(),
+        // Registration is invite-only. Accounts are created by accepting an
+        // invitation (App\Http\Controllers\InvitationAcceptanceController),
+        // not through Fortify's open registration routes.
         Features::resetPasswords(),
         Features::emailVerification(),
         Features::twoFactorAuthentication([

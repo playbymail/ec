@@ -1,11 +1,7 @@
 import { Head, Link, usePage } from '@inertiajs/react';
-import { dashboard, docs, login, register } from '@/routes';
+import { dashboard, docs, login } from '@/routes';
 
-export default function Welcome({
-    canRegister = true,
-}: {
-    canRegister?: boolean;
-}) {
+export default function Welcome() {
     const { auth } = usePage().props;
 
     return (
@@ -22,22 +18,12 @@ export default function Welcome({
                                 Dashboard
                             </Link>
                         ) : (
-                            <>
-                                <Link
-                                    href={login()}
-                                    className="inline-block rounded-sm border border-transparent px-5 py-1.5 text-sm leading-normal text-[#1b1b18] hover:border-[#19140035] dark:text-[#EDEDEC] dark:hover:border-[#3E3E3A]"
-                                >
-                                    Log in
-                                </Link>
-                                {canRegister && (
-                                    <Link
-                                        href={register()}
-                                        className="inline-block rounded-sm border border-[#19140035] px-5 py-1.5 text-sm leading-normal text-[#1b1b18] hover:border-[#1915014a] dark:border-[#3E3E3A] dark:text-[#EDEDEC] dark:hover:border-[#62605b]"
-                                    >
-                                        Register
-                                    </Link>
-                                )}
-                            </>
+                            <Link
+                                href={login()}
+                                className="inline-block rounded-sm border border-[#19140035] px-5 py-1.5 text-sm leading-normal text-[#1b1b18] hover:border-[#1915014a] dark:border-[#3E3E3A] dark:text-[#EDEDEC] dark:hover:border-[#62605b]"
+                            >
+                                Log in
+                            </Link>
                         )}
                     </nav>
                 </header>
@@ -48,10 +34,16 @@ export default function Welcome({
                                 Epimethean Challenge
                             </h1>
                             <p className="mb-4 text-[#706f6c] dark:text-[#A1A09A]">
-                                A 4X turn-based strategy game where players explore, expand, exploit, and exterminate in a battle for control of the cluster.
+                                A 4X turn-based strategy game where players
+                                explore, expand, exploit, and exterminate in a
+                                battle for control of the cluster.
                             </p>
                             <p className="mb-6 text-[#706f6c] dark:text-[#A1A09A]">
-                                Inspired by the original 1978 Empyrean Challenge rulebook, EC brings the classic play-by-mail space strategy experience to the browser. Build your empire, command your fleets, and outmaneuver your rivals across the stars.
+                                Inspired by the original 1978 Empyrean Challenge
+                                rulebook, EC brings the classic play-by-mail
+                                space strategy experience to the browser. Build
+                                your empire, command your fleets, and
+                                outmaneuver your rivals across the stars.
                             </p>
                             <ul className="flex gap-3 text-sm leading-normal">
                                 <li>
