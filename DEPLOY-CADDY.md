@@ -366,6 +366,10 @@ sudo chown caddy:caddy /var/log/caddy
 sudo chmod 0755 /var/log/caddy
 ```
 
+Create the directory only. Do **not** `touch` the log file: Caddy creates it as
+`caddy:caddy` mode 0600 on first load, and a file pre-created by `sudo` is owned
+by `root` and unopenable by the `caddy` user.
+
 Then edit the Caddyfile:
 
 ```bash
@@ -567,9 +571,21 @@ sudo journalctl -u caddy -n 5 --no-pager -o cat
 ```
 
 `setting up custom log 'log0': ... no such file or directory` means
-`/var/log/caddy` is missing or not writable by the `caddy` user; see the top of
-section 9. A failed reload leaves the previously loaded config running, so the
-site stays up while you fix it.
+`/var/log/caddy` is missing; create it as shown at the top of section 9.
+
+The same error ending in `permission denied` means the directory exists but the
+log **file** does not belong to `caddy` — almost always because it was created
+with `sudo touch`. Check the file, not just the directory, and let Caddy make its
+own:
+
+```bash
+sudo ls -la /var/log/caddy
+sudo rm -f /var/log/caddy/ec.pbbgaming.com.log
+sudo systemctl reload caddy
+```
+
+A failed reload leaves the previously loaded config running, so the site stays up
+while you fix it.
 
 **Caddy will not issue a certificate.** DNS is not pointing here yet, or 80/443 are
 blocked.
