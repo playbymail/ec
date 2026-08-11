@@ -42,3 +42,12 @@ An account holds at most one seat per game — `game_seats` has a unique index o
 Short names are uppercased in `GameStoreRequest`/`GameUpdateRequest` (they show up in turn reports and file names) and limited to 16 chars of [A-Z0-9-].
 
 Seat routes are nested under a game inside `Route::scopeBindings()`, so a seat from another game 404s rather than being edited through the wrong game.
+
+## Impersonation keeps the return trip outside the admin group
+`App\Actions\Impersonation\Impersonation` owns the `impersonator_id` session key; the controller and `HandleInertiaRequests` both go through it rather than touching the session directly.
+
+Starting an impersonation (`admin.users.impersonate`) refuses admins and self, so an impersonated session is always a member — which is why the admin middleware alone blocks a second, chained impersonation. It also means the stop route (`impersonate.destroy` in routes/web.php) must stay outside the admin group and outside `verified`, or an impersonated or unverified session has no way back.
+
+`Auth::login()` migrates the session to a fresh id while keeping its data, so no extra `regenerate()` is needed. If the administrator is deleted or demoted mid-impersonation, stopping signs the session out entirely instead of handing it to a non-admin. The shared `impersonation` prop still renders a nameless banner in that case so the session is never stranded.
+
+Sensitive account actions are safe to leave alone: profile deletion and password changes require the account's current password, which the impersonating administrator does not have.

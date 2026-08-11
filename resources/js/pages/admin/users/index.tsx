@@ -1,5 +1,6 @@
 import { Form, Head, router } from '@inertiajs/react';
 import UserController from '@/actions/App/Http/Controllers/Admin/UserController';
+import ImpersonationController from '@/actions/App/Http/Controllers/ImpersonationController';
 import Heading from '@/components/heading';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,7 @@ type ManagedUser = {
     sessions_count: number;
     created_at: string | null;
     is_self: boolean;
+    can_impersonate: boolean;
 };
 
 type Role = {
@@ -174,7 +176,27 @@ export default function Users({ users, roles }: Props) {
                                     {formatDate(user.created_at)}
                                 </td>
                                 <td className="px-4 py-3">
-                                    <div className="flex justify-end">
+                                    <div className="flex justify-end gap-1">
+                                        {user.can_impersonate && (
+                                            <Form
+                                                {...ImpersonationController.store.form(
+                                                    user.id,
+                                                )}
+                                            >
+                                                {({ processing }) => (
+                                                    <Button
+                                                        type="submit"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        disabled={processing}
+                                                        data-test={`impersonate-user-${user.id}-button`}
+                                                    >
+                                                        Impersonate
+                                                    </Button>
+                                                )}
+                                            </Form>
+                                        )}
+
                                         {!user.is_self && (
                                             <Dialog>
                                                 <DialogTrigger asChild>

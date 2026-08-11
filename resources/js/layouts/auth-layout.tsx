@@ -1,3 +1,4 @@
+import { ImpersonationBanner } from '@/components/impersonation-banner';
 import AuthLayoutTemplate from '@/layouts/auth/auth-simple-layout';
 
 export default function AuthLayout({
@@ -10,8 +11,14 @@ export default function AuthLayout({
     children: React.ReactNode;
 }) {
     return (
-        <AuthLayoutTemplate title={title} description={description}>
-            {children}
-        </AuthLayoutTemplate>
+        <>
+            {/* An impersonated account may be unverified, which parks it on an
+                auth page — the way back has to be reachable from here too. */}
+            <ImpersonationBanner />
+
+            <AuthLayoutTemplate title={title} description={description}>
+                {children}
+            </AuthLayoutTemplate>
+        </>
     );
 }

@@ -33,6 +33,7 @@ class UserController extends Controller
                 'sessions_count' => $user->sessions_count,
                 'created_at' => $user->created_at?->toIso8601String(),
                 'is_self' => $user->is($request->user()),
+                'can_impersonate' => ! $user->isAdmin() && ! $user->is($request->user()),
             ]);
 
         return Inertia::render('admin/users/index', [
