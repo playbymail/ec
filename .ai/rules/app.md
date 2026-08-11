@@ -20,3 +20,12 @@ The only supported way to mint the first administrator — including in producti
 Invitation tokens are stored as a sha256 hash (`Invitation::hashToken()`); only the emailed link carries the plain text. That means a token cannot be recovered — resending an invitation issues a new one and invalidates the old link. `App\Actions\Invitations\IssueInvitation` is the single place that mints tokens and sends mail; both the create and resend endpoints go through it.
 
 Accepting an invitation does NOT verify the email address. Clicking a mailed link is not proof of control, so the invitee still completes the standard `MustVerifyEmail` flow afterwards.
+
+## Session rows are addressed by digest, never by raw session id
+`App\Models\Session` maps the `sessions` table written by the database session driver (SESSION_DRIVER=database in production, array in tests).
+
+Its primary key IS the live session identifier: anything holding it can impersonate that browser. So the admin sessions screen and `admin.sessions.destroy` address a session by `Session::digest()` (sha256 of the id) and resolve it with `Session::findByDigest()`, which compares in PHP because SQLite has no sha2(). Never send a raw session id to the frontend or accept one as a route parameter.
+
+The `sessions.user_id` foreign key is not constrained, so deleting a user does not cascade — `App\Http\Controllers\Admin\UserController::destroy` deletes `$user->sessions()` explicitly. Passkeys do cascade.
+
+Administrators cannot change their own role, delete their own account, or sign their own browser out (403 on all three) — that is what keeps the last administrator from locking everyone out.
