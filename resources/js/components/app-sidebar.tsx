@@ -1,6 +1,7 @@
 import { Link, usePage } from '@inertiajs/react';
 import {
     BookOpen,
+    Dices,
     FolderGit2,
     LayoutGrid,
     MailPlus,
@@ -21,6 +22,7 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard, docs } from '@/routes';
+import { index as games } from '@/routes/admin/games';
 import { index as invitations } from '@/routes/admin/invitations';
 import { index as sessions } from '@/routes/admin/sessions';
 import { index as users } from '@/routes/admin/users';
@@ -35,6 +37,11 @@ const mainNavItems: NavItem[] = [
 ];
 
 const adminNavItems: NavItem[] = [
+    {
+        title: 'Games',
+        href: games(),
+        icon: Dices,
+    },
     {
         title: 'Invitations',
         href: invitations(),

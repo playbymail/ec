@@ -29,3 +29,16 @@ Its primary key IS the live session identifier: anything holding it can imperson
 The `sessions.user_id` foreign key is not constrained, so deleting a user does not cascade — `App\Http\Controllers\Admin\UserController::destroy` deletes `$user->sessions()` explicitly. Passkeys do cascade.
 
 Administrators cannot change their own role, delete their own account, or sign their own browser out (403 on all three) — that is what keeps the last administrator from locking everyone out.
+
+## Games: seats are retired, never deleted, and game roles are not app roles
+This application owns game metadata only — name, short name, status (`App\Enums\GameStatus`: setup, active, paused, completed, archived) and the seat roster. The game engine owns game state; do not model turns or state here.
+
+`App\Enums\GameRole` (player | gamemaster) is a game concept with zero application permissions. It is unrelated to `App\Enums\UserRole`, which is what grants admin access. A gamemaster seat does not let anyone into /admin.
+
+An account holds at most one seat per game — `game_seats` has a unique index on (game_id, user_id), and `GameSeatStoreRequest` rejects a duplicate with a pointed message. `GameSeat` has no destroy endpoint: retire a seat with `is_active = false` instead, because engine history keeps referring to it. That means the uniqueness check counts retired seats too, so bringing a departed account back is a reactivation, never a second row — `GameController::show` leaves already-seated accounts out of `assignableUsers` for exactly that reason.
+
+`Game::activeSeats()` exists so `withCount(['seats', 'activeSeats'])` yields `active_seats_count` that Larastan can resolve — do not reach for a `seats as active_seats_count` closure alias.
+
+Short names are uppercased in `GameStoreRequest`/`GameUpdateRequest` (they show up in turn reports and file names) and limited to 16 chars of [A-Z0-9-].
+
+Seat routes are nested under a game inside `Route::scopeBindings()`, so a seat from another game 404s rather than being edited through the wrong game.

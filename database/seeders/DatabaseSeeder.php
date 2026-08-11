@@ -2,6 +2,8 @@
 
 namespace Database\Seeders;
 
+use App\Enums\GameRole;
+use App\Models\Game;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -17,14 +19,22 @@ class DatabaseSeeder extends Seeder
     {
         // User::factory(10)->create();
 
-        User::factory()->create([
+        $member = User::factory()->create([
             'name' => 'Test User',
             'email' => 'test@example.com',
         ]);
 
-        User::factory()->admin()->create([
+        $admin = User::factory()->admin()->create([
             'name' => 'Admin User',
             'email' => 'admin@example.com',
         ]);
+
+        $game = Game::factory()->create([
+            'name' => 'The Epimethean Challenge',
+            'short_name' => 'EC01',
+        ]);
+
+        $game->seats()->create(['user_id' => $admin->id, 'role' => GameRole::Gamemaster]);
+        $game->seats()->create(['user_id' => $member->id, 'role' => GameRole::Player]);
     }
 }

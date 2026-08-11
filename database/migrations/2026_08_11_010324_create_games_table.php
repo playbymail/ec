@@ -1,0 +1,31 @@
+<?php
+
+use App\Enums\GameStatus;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('games', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->unique();
+            $table->string('short_name', 16)->unique();
+            $table->string('status')->default(GameStatus::Setup->value)->index();
+            $table->timestamps();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('games');
+    }
+};

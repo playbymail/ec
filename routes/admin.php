@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Admin\GameController;
+use App\Http\Controllers\Admin\GameSeatController;
 use App\Http\Controllers\Admin\InvitationController;
 use App\Http\Controllers\Admin\SessionController;
 use App\Http\Controllers\Admin\UserController;
@@ -10,6 +12,18 @@ Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.'
     Route::post('invitations', [InvitationController::class, 'store'])->name('invitations.store');
     Route::put('invitations/{invitation}', [InvitationController::class, 'update'])->name('invitations.update');
     Route::delete('invitations/{invitation}', [InvitationController::class, 'destroy'])->name('invitations.destroy');
+
+    Route::get('games', [GameController::class, 'index'])->name('games.index');
+    Route::post('games', [GameController::class, 'store'])->name('games.store');
+    Route::get('games/{game}', [GameController::class, 'show'])->name('games.show');
+    Route::put('games/{game}', [GameController::class, 'update'])->name('games.update');
+    Route::delete('games/{game}', [GameController::class, 'destroy'])->name('games.destroy');
+
+    // Scoped bindings keep a seat from one game out of another game's URLs.
+    Route::scopeBindings()->group(function () {
+        Route::post('games/{game}/seats', [GameSeatController::class, 'store'])->name('games.seats.store');
+        Route::put('games/{game}/seats/{seat}', [GameSeatController::class, 'update'])->name('games.seats.update');
+    });
 
     Route::get('users', [UserController::class, 'index'])->name('users.index');
     Route::put('users/{user}', [UserController::class, 'update'])->name('users.update');
