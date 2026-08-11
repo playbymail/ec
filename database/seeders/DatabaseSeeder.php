@@ -36,5 +36,7 @@ class DatabaseSeeder extends Seeder
 
         $game->seats()->create(['user_id' => $admin->id, 'role' => GameRole::Gamemaster]);
         $game->seats()->create(['user_id' => $member->id, 'role' => GameRole::Player]);
+
+        $this->call(DevelopmentUserSeeder::class);
     }
 }
