@@ -5,6 +5,10 @@ on:
     branches:
       - main
   pull_request:
+  # Lets a run be started from the Actions tab or `gh workflow run tests`, so
+  # checking CI does not need a commit pushed at it. The workflow still has to
+  # be enabled: `disabled_manually` blocks this trigger along with the rest.
+  workflow_dispatch:
 
 permissions:
   contents: read
