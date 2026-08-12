@@ -1,20 +1,29 @@
 <?php
 
 use App\Models\User;
+use Inertia\Testing\AssertableInertia as Assert;
 
 /**
- * The signed-out surface (`welcome`, `docs`) renders inside `PublicLayout`, which owns the page
- * frame. There is no SSR entrypoint, so nothing here can assert the rendered markup — these pin
- * the wiring and the two structural mistakes that would break the layout silently.
+ * The signed-out surface: the landing page, the documentation placeholder, and the `PublicLayout`
+ * they both render inside.
+ *
+ * There is no SSR entrypoint, so nothing here observes rendered React. The HTTP tests pin the
+ * routes and the components they resolve to; the source-level tests pin the structural decisions
+ * that would otherwise break the layout silently.
  */
 function publicSource(string $path): string
 {
     return file_get_contents(resource_path($path));
 }
 
-test('the public routes stay reachable for guests', function () {
-    $this->get(route('home'))->assertOk();
-    $this->get(route('docs'))->assertOk();
+test('the public routes render their pages for guests', function () {
+    $this->get(route('home'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page->component('welcome'));
+
+    $this->get(route('docs'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page->component('docs'));
 });
 
 test('the public routes stay reachable once signed in', function () {
@@ -22,6 +31,14 @@ test('the public routes stay reachable once signed in', function () {
 
     $this->get(route('home'))->assertOk();
     $this->get(route('docs'))->assertOk();
+});
+
+test('the landing page does not advertise registration', function () {
+    $this->get(route('home'))
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('welcome')
+            ->missing('canRegister'),
+        );
 });
 
 test('the landing page and the docs page resolve to the public layout', function () {
