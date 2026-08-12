@@ -29,12 +29,36 @@ const setCookie = (name: string, value: string, days = 365): void => {
     document.cookie = `${name}=${value};path=/;max-age=${maxAge};SameSite=Lax`;
 };
 
-const getStoredAppearance = (): Appearance => {
-    if (typeof window === 'undefined') {
-        return 'system';
+const getCookie = (name: string): string | null => {
+    if (typeof document === 'undefined') {
+        return null;
     }
 
-    return (localStorage.getItem('appearance') as Appearance) || 'system';
+    const match = document.cookie.match(
+        new RegExp(`(?:^|;\\s*)${name}=([^;]*)`),
+    );
+
+    return match ? decodeURIComponent(match[1]) : null;
+};
+
+const isAppearance = (value: string | null): value is Appearance => {
+    return value === 'light' || value === 'dark' || value === 'system';
+};
+
+/**
+ * The `appearance` cookie is the single source of truth, and deliberately the only one.
+ *
+ * It is the value `resources/views/app.blade.php` resolves the first paint from, so reading it
+ * back here is what guarantees hydration re-applies the theme already on screen instead of
+ * flipping it. This previously kept the choice in localStorage as well and read that first, which
+ * cannot stay in step with a cookie that has its own expiry and its own "clear cookies" button:
+ * whichever store outlived the other won, and the loser was what the server had already painted.
+ * One store the server can see is worth more than two that can disagree.
+ */
+const getStoredAppearance = (): Appearance => {
+    const cookie = getCookie('appearance');
+
+    return isAppearance(cookie) ? cookie : 'system';
 };
 
 const isDarkMode = (appearance: Appearance): boolean => {
@@ -70,20 +94,25 @@ const mediaQuery = (): MediaQueryList | null => {
 
 const handleSystemThemeChange = (): void => applyTheme(currentAppearance);
 
+export function updateAppearance(mode: Appearance): void {
+    currentAppearance = mode;
+
+    setCookie('appearance', mode);
+    applyTheme(mode);
+    notify();
+}
+
 export function initializeTheme(): void {
     if (typeof window === 'undefined') {
         return;
     }
 
-    if (!localStorage.getItem('appearance')) {
-        localStorage.setItem('appearance', 'system');
-        setCookie('appearance', 'system');
-    }
+    /**
+     * Writing the stored value straight back refreshes the cookie's expiry on every visit, so an
+     * active user's choice never lapses, and re-applies the theme the server has already painted.
+     */
+    updateAppearance(getStoredAppearance());
 
-    currentAppearance = getStoredAppearance();
-    applyTheme(currentAppearance);
-
-    // Set up system theme change listener
     mediaQuery()?.addEventListener('change', handleSystemThemeChange);
 }
 
@@ -97,19 +126,6 @@ export function useAppearance(): UseAppearanceReturn {
     const resolvedAppearance: ResolvedAppearance = isDarkMode(appearance)
         ? 'dark'
         : 'light';
-
-    const updateAppearance = (mode: Appearance): void => {
-        currentAppearance = mode;
-
-        // Store in localStorage for client-side persistence...
-        localStorage.setItem('appearance', mode);
-
-        // Store in cookie for SSR...
-        setCookie('appearance', mode);
-
-        applyTheme(mode);
-        notify();
-    };
 
     return { appearance, resolvedAppearance, updateAppearance } as const;
 }

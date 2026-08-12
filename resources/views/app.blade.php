@@ -4,18 +4,23 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
 
-        {{-- Inline script to detect system dark mode preference and apply it immediately --}}
+        {{--
+            The class on <html> above covers an explicit light/dark choice, but it cannot resolve
+            "system" — only the browser knows the OS preference. Resolving it here, in a blocking
+            script before any stylesheet, is what stops a "system" user on a dark OS seeing a light
+            first paint that flips to dark once resources/js/hooks/use-appearance.tsx hydrates.
+
+            The cookie is attacker-settable and lands inside a script body, so @js() is doing real
+            work: swapping it for {{ }} or {!! !!} would turn this into an XSS hole.
+        --}}
         <script>
-            (function() {
-                const appearance = '{{ $appearance ?? "system" }}';
+            (function () {
+                const appearance = @js($appearance ?? 'system');
+                const isDark = appearance === 'dark'
+                    || (appearance === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-                if (appearance === 'system') {
-                    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-
-                    if (prefersDark) {
-                        document.documentElement.classList.add('dark');
-                    }
-                }
+                document.documentElement.classList.toggle('dark', isDark);
+                document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
             })();
         </script>
 
