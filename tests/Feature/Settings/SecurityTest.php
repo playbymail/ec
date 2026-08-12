@@ -4,6 +4,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Inertia\Testing\AssertableInertia as Assert;
 use Laravel\Fortify\Features;
+use Laravel\Passkeys\Passkey;
 
 test('security page is displayed', function () {
     $this->skipUnlessFortifyHas(Features::twoFactorAuthentication());
@@ -27,6 +28,41 @@ test('security page is displayed', function () {
             ->where('passkeys', [])
             ->where('canManageTwoFactor', true)
             ->where('twoFactorEnabled', false),
+        );
+});
+
+test('a passkey with no recorded creation time is listed rather than fatal', function () {
+    $this->skipUnlessFortifyHas(Features::twoFactorAuthentication());
+
+    Features::passkeys(['confirmPassword' => true]);
+
+    $user = User::factory()->create();
+
+    /*
+     * `passkeys.created_at` is nullable in the schema and the package types it `Carbon|null`,
+     * so a row without one has to reach the page as a null rather than a call on null. Inserted
+     * through the query builder because the model would stamp the timestamp on save.
+     */
+    Passkey::query()->insert([
+        'user_id' => $user->id,
+        'name' => 'Recovered key',
+        'credential_id' => 'credential-without-a-timestamp',
+        'credential' => '{}',
+        'created_at' => null,
+        'updated_at' => null,
+        'last_used_at' => null,
+    ]);
+
+    $this->actingAs($user)
+        ->withSession(['auth.password_confirmed_at' => time()])
+        ->get(route('security.edit'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('settings/security')
+            ->has('passkeys', 1)
+            ->where('passkeys.0.name', 'Recovered key')
+            ->where('passkeys.0.created_at_diff', null)
+            ->where('passkeys.0.last_used_at_diff', null),
         );
 });
 

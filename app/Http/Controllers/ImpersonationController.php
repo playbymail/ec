@@ -17,7 +17,7 @@ class ImpersonationController extends Controller
      */
     public function store(Request $request, User $user): RedirectResponse
     {
-        $impersonator = $request->user();
+        $impersonator = $this->authenticatedUser($request);
 
         abort_if($user->is($impersonator), 403);
         abort_if($user->isAdmin(), 403);

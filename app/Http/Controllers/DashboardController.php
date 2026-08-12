@@ -17,7 +17,7 @@ class DashboardController extends Controller
      */
     public function index(Request $request): Response
     {
-        $seats = $request->user()->gameSeats()
+        $seats = $this->authenticatedUser($request)->gameSeats()
             ->active()
             ->with('game')
             ->get()
