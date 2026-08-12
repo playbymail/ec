@@ -12,6 +12,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
+import { index as adminIndex } from '@/routes/admin';
 import { index } from '@/routes/admin/sessions';
 
 type ActiveSession = {
@@ -45,64 +46,17 @@ export default function Sessions({ sessions }: Props) {
     const revocable = sessions.filter((session) => !session.is_current);
 
     return (
-        <div className="px-4 py-6">
+        <div className="flex h-full flex-1 flex-col gap-8 rounded-xl p-4">
             <Head title="Sessions" />
 
-            <div className="flex flex-wrap items-start justify-between gap-4">
-                <Heading
-                    title="Sessions"
-                    description="Every browser currently signed in. Sign one out to force it back to the login screen."
-                />
+            <h1 className="sr-only">Sessions</h1>
 
-                {revocable.length > 0 && (
-                    <Dialog>
-                        <DialogTrigger asChild>
-                            <Button
-                                variant="outline"
-                                data-test="sign-out-all-button"
-                            >
-                                Sign out all others
-                            </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                            <DialogTitle>
-                                Sign out {revocable.length}{' '}
-                                {revocable.length === 1
-                                    ? 'session'
-                                    : 'sessions'}
-                                ?
-                            </DialogTitle>
-                            <DialogDescription>
-                                Everyone except this browser is signed out
-                                immediately and has to log in again.
-                            </DialogDescription>
+            <Heading
+                title="Sessions"
+                description="Every browser currently signed in. Signing one out ends it immediately — whoever is using it has to log in again."
+            />
 
-                            <Form {...SessionController.destroyAll.form()}>
-                                {({ processing }) => (
-                                    <DialogFooter className="gap-2">
-                                        <DialogClose asChild>
-                                            <Button variant="secondary">
-                                                Cancel
-                                            </Button>
-                                        </DialogClose>
-
-                                        <Button
-                                            type="submit"
-                                            variant="destructive"
-                                            disabled={processing}
-                                            data-test="confirm-sign-out-all-button"
-                                        >
-                                            Sign them out
-                                        </Button>
-                                    </DialogFooter>
-                                )}
-                            </Form>
-                        </DialogContent>
-                    </Dialog>
-                )}
-            </div>
-
-            <div className="mt-6 overflow-x-auto rounded-lg border">
+            <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full text-left text-sm">
                     <thead className="border-b bg-muted/50 text-muted-foreground">
                         <tr>
@@ -195,12 +149,71 @@ export default function Sessions({ sessions }: Props) {
                     </tbody>
                 </table>
             </div>
+
+            {revocable.length > 0 && (
+                <section className="space-y-4">
+                    <Heading
+                        variant="small"
+                        title="Sign out everybody else"
+                        description="Ends every session except the one you are reading this in."
+                    />
+
+                    <Dialog>
+                        <DialogTrigger asChild>
+                            <Button
+                                variant="outline"
+                                data-test="sign-out-all-button"
+                            >
+                                Sign out all others
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogTitle>
+                                Sign out {revocable.length}{' '}
+                                {revocable.length === 1
+                                    ? 'session'
+                                    : 'sessions'}
+                                ?
+                            </DialogTitle>
+                            <DialogDescription>
+                                Everyone except this browser is signed out
+                                immediately and has to log in again.
+                            </DialogDescription>
+
+                            <Form {...SessionController.destroyAll.form()}>
+                                {({ processing }) => (
+                                    <DialogFooter className="gap-2">
+                                        <DialogClose asChild>
+                                            <Button variant="secondary">
+                                                Cancel
+                                            </Button>
+                                        </DialogClose>
+
+                                        <Button
+                                            type="submit"
+                                            variant="destructive"
+                                            disabled={processing}
+                                            data-test="confirm-sign-out-all-button"
+                                        >
+                                            Sign them out
+                                        </Button>
+                                    </DialogFooter>
+                                )}
+                            </Form>
+                        </DialogContent>
+                    </Dialog>
+                </section>
+            )}
         </div>
     );
 }
 
 Sessions.layout = {
     breadcrumbs: [
+        {
+            title: 'Administration',
+            href: adminIndex(),
+        },
         {
             title: 'Sessions',
             href: index(),

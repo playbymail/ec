@@ -103,46 +103,48 @@ export default function Dashboard({ gamemasterGames, playerGames }: Props) {
     const hasNoGames = gamemasterGames.length === 0 && playerGames.length === 0;
 
     return (
-        <div className="px-4 py-6">
+        <div className="flex h-full flex-1 flex-col gap-8 rounded-xl p-4">
             <Head title="Dashboard" />
+
+            <h1 className="sr-only">Dashboard</h1>
 
             <Heading
                 title="Your games"
-                description="The games you hold a seat in."
+                description="The games you hold a seat in, and the role you hold in each of them."
             />
 
             {hasNoGames && (
                 <div
-                    className="rounded-lg border border-dashed px-6 py-10 text-center"
+                    className="rounded-lg border border-border p-8 text-center"
                     data-test="no-games-blurb"
                 >
-                    <p className="font-medium">You are not in any games yet.</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                        A gamemaster seats you in a game when one is ready for
-                        you. It will show up here as soon as they do.
+                    <p className="font-medium">You are not in any games yet</p>
+                    <p className="mx-auto mt-1 max-w-prose text-sm text-muted-foreground">
+                        A seat at a game is given to you by an administrator,
+                        and it is what puts a game on this page. Once you have
+                        one, the games you run and the games you play are listed
+                        here separately.
                     </p>
                 </div>
             )}
 
-            <div className="flex flex-col gap-8">
-                {gamemasterGames.length > 0 && (
-                    <GameSection
-                        title="Running as gamemaster"
-                        description="Games you hold a gamemaster seat in."
-                        games={gamemasterGames}
-                        testPrefix="gamemaster"
-                    />
-                )}
+            {gamemasterGames.length > 0 && (
+                <GameSection
+                    title="Running"
+                    description="Games you are the gamemaster of."
+                    games={gamemasterGames}
+                    testPrefix="gamemaster"
+                />
+            )}
 
-                {playerGames.length > 0 && (
-                    <GameSection
-                        title="Playing"
-                        description="Games you hold a player seat in."
-                        games={playerGames}
-                        testPrefix="player"
-                    />
-                )}
-            </div>
+            {playerGames.length > 0 && (
+                <GameSection
+                    title="Playing"
+                    description="Games you hold a player's seat in."
+                    games={playerGames}
+                    testPrefix="player"
+                />
+            )}
         </div>
     );
 }

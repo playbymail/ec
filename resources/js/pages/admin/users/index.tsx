@@ -20,6 +20,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import { index as adminIndex } from '@/routes/admin';
 import { index } from '@/routes/admin/users';
 
 type ManagedUser = {
@@ -72,12 +73,14 @@ export default function Users({ users, roles }: Props) {
     }
 
     return (
-        <div className="px-4 py-6">
+        <div className="flex h-full flex-1 flex-col gap-8 rounded-xl p-4">
             <Head title="Users" />
+
+            <h1 className="sr-only">Users</h1>
 
             <Heading
                 title="Users"
-                description="Every account on the application. Change a role to grant or withdraw administrator access."
+                description="Every account on the application, how it signs in, and how many browsers it is currently signed in on. Change a role to grant or withdraw administrator access."
             />
 
             <div className="overflow-x-auto rounded-lg border">
@@ -267,6 +270,10 @@ export default function Users({ users, roles }: Props) {
 
 Users.layout = {
     breadcrumbs: [
+        {
+            title: 'Administration',
+            href: adminIndex(),
+        },
         {
             title: 'Users',
             href: index(),
