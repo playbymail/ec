@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\GameController;
 use App\Http\Controllers\Admin\GameSeatController;
 use App\Http\Controllers\Admin\InvitationController;
@@ -9,6 +10,8 @@ use App\Http\Controllers\ImpersonationController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth', 'verified', 'admin'])->prefix('admin')->name('admin.')->group(function () {
+    Route::get('/', [DashboardController::class, 'index'])->name('index');
+
     Route::get('invitations', [InvitationController::class, 'index'])->name('invitations.index');
     Route::post('invitations', [InvitationController::class, 'store'])->name('invitations.store');
     Route::put('invitations/{invitation}', [InvitationController::class, 'update'])->name('invitations.update');

@@ -6,6 +6,7 @@ import {
     LayoutGrid,
     MailPlus,
     MonitorSmartphone,
+    ShieldCheck,
     Users,
 } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
@@ -22,6 +23,7 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard, docs } from '@/routes';
+import { index as adminIndex } from '@/routes/admin';
 import { index as games } from '@/routes/admin/games';
 import { index as invitations } from '@/routes/admin/invitations';
 import { index as sessions } from '@/routes/admin/sessions';
@@ -36,7 +38,17 @@ const mainNavItems: NavItem[] = [
     },
 ];
 
+/*
+ * The landing page leads, then the four areas it links to. The reference application collapses
+ * these into the landing page alone; keeping the direct links means an administrator still
+ * reaches any area in one click, which is worth the four extra rows.
+ */
 const adminNavItems: NavItem[] = [
+    {
+        title: 'Administration',
+        href: adminIndex(),
+        icon: ShieldCheck,
+    },
     {
         title: 'Games',
         href: games(),
