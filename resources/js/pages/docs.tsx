@@ -1,26 +1,51 @@
 import { Head, Link } from '@inertiajs/react';
+import { Button } from '@/components/ui/button';
 import { home } from '@/routes';
+
+const plannedSections = [
+    'Rules: the game as it is played today',
+    'Turn formats: what to send, and what comes back',
+    'Command reference: every order, with worked examples',
+    'Accepting an invitation and setting up your account',
+];
 
 export default function Docs() {
     return (
         <>
             <Head title="Documentation" />
-            <div className="flex min-h-screen flex-col items-center justify-center bg-[#FDFDFC] p-6 text-[#1b1b18] lg:p-8 dark:bg-[#0a0a0a]">
-                <main className="w-full max-w-[335px] rounded-lg bg-white p-6 pb-12 text-[13px] leading-[20px] shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] lg:max-w-xl lg:p-12 dark:bg-[#161615] dark:text-[#EDEDEC] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]">
-                    <h1 className="mb-1 text-lg font-medium">Documentation</h1>
-                    <p className="mb-6 text-[#706f6c] dark:text-[#A1A09A]">
-                        The Epimethean Challenge documentation is still being
-                        written. Rules, turn formats, and command references
-                        will land here as they are finished.
-                    </p>
-                    <Link
-                        href={home()}
-                        className="inline-block rounded-sm border border-black bg-[#1b1b18] px-5 py-1.5 text-sm leading-normal text-white hover:border-black hover:bg-black dark:border-[#eeeeec] dark:bg-[#eeeeec] dark:text-[#1C1C1A] dark:hover:border-white dark:hover:bg-white"
-                    >
-                        Back to home
-                    </Link>
-                </main>
-            </div>
+
+            <section className="max-w-3xl">
+                <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                    Documentation
+                </h1>
+
+                <p className="mt-4 text-lg text-muted-foreground">
+                    Still being written. Rules, turn formats and command
+                    references will land here as they are finished.
+                </p>
+
+                <h2 className="mt-10 text-sm font-medium tracking-wide uppercase">
+                    Planned sections
+                </h2>
+
+                <ul className="mt-4 space-y-3 text-muted-foreground">
+                    {plannedSections.map((section) => (
+                        <li key={section} className="flex gap-3">
+                            <span
+                                className="mt-2.5 size-1.5 shrink-0 rounded-full bg-border"
+                                aria-hidden="true"
+                            />
+                            <span>{section}</span>
+                        </li>
+                    ))}
+                </ul>
+
+                <div className="mt-10">
+                    <Button variant="outline" asChild>
+                        <Link href={home()}>Back to the start</Link>
+                    </Button>
+                </div>
+            </section>
         </>
     );
 }
