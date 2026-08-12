@@ -9,3 +9,4 @@ Before planning or editing, find the row whose globs match the file's path and r
 | resources/js/** | .ai/rules/js.md |
 | scripts/** | .ai/rules/scripts.md |
 | database/seeders/** | .ai/rules/seeders.md |
+| resources/views/** | .ai/rules/views.md |
